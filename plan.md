@@ -1,9 +1,11 @@
 # plan.md
 
-**Project:** Employee Task Monitoring System
-**Companion document:** `project-context.md` (problem, roles, monitoring formulas, data model, open questions)
-**Status:** Plan only. No application code exists. Nothing in this document has been built.
+**Project:** Employee Task Monitoring System (`[PRODUCT NAME]` — not yet chosen)
+**Companion documents:** `project-context.md` (problem, roles, monitoring formulas, data model, open questions) · `README.md` (stack, scripts, conventions) · `AGENTS.md` (binding engineering rules)
+**Status:** Plan only. No application code exists. Phase 0 has not started.
 **Last updated:** 2026-09-28
+
+**Locked decisions** (from `project-context.md` §12): Vite + React 19 SPA · Tailwind CSS v4 · Supabase (Postgres/Auth/RLS/Storage) · fresh build, no port of another product's interface · Board + Table views · Conventional Commits v1.0.0 with branch prefixes matching the commit type.
 
 ---
 
@@ -36,6 +38,7 @@ Anything that maps to `—` is either cut or explicitly deferred to §7. There i
 | 10 | Derived flags: `is_active`, `is_overdue`, `is_stalled` (single SQL view) | | ● | ● | ● | **Keep** — the product's core computation | 4 |
 | 11 | Kanban board with drag between status columns | ○ | ● | ● | | **Keep** — status changes are how work is reported; it is the "at a glance" view of G1/G2 | 2 |
 | 12 | Board filters (assignee, priority, due, stalled) | | ● | ● | ● | **Keep** — turns the board into a monitoring tool rather than a to-do list | 2 |
+| 12b | Board **Table** view (sortable, same filters) | | ● | ● | ● | **Keep** — scanning and sorting across tasks (by last activity, due date, stalled) without leaving the board. **Timeline and Map are cut** — they answer "when"/"where", not who/what/done/overdue | 2 |
 | 13 | Employee "My Tasks" view with status updates | | ● | ● | | **Keep** — the *only* way G1/G2 can be true; without employee input, the manager is guessing | 3 |
 | 14 | Checklist with tick items | | ● | ● | | **Keep** — activity type and progress-within-task | 3 |
 | 15 | Comments | | ● | ● | | **Keep** — activity type, and where "blocked" gets explained | 3 |
@@ -67,8 +70,9 @@ Anything that maps to `—` is either cut or explicitly deferred to §7. There i
 | 41 | WCAG contrast helper + focus/keyboard system | | | | | **Keep** — accessibility is part of "done", and the client may choose colours | 0, every phase |
 | 42 | Light and dark themes | | | | | **Keep** — already decided | 0 |
 | 43 | Global quick-capture shortcut | ● | | | | **Keep (thin)** — small, directly serves G0 | 5 |
+| 44 | Global search (`/`) | | ● | ● | ● | **Keep** — "which tasks mention the supplier invoice" is a monitoring question. Own tasks for an employee, org-wide for a manager, enforced by RLS | 4 |
 
-**Verdict tally:** 26 keep (2 of them thin), 8 defer, 7 cut, 1 permanent cut.
+**Verdict tally:** 28 keep (2 of them thin), 8 defer, 7 cut, 1 permanent cut.
 
 ### 1.3 Features deliberately *not* in this plan, and why
 
@@ -85,22 +89,33 @@ A monitoring product is easy to grow into a productivity suite. These are the mo
 
 ## 2. Proposed folder structure
 
-**Described only. Not created in this planning pass.** Final structure is confirmed in Phase 0; deviations are expected and must be recorded in this document.
+**One npm package, one Vercel project.** Supabase is the backend, so there is no second application to maintain; server-side work that needs the service-role key becomes a Vercel function.
 
 ```
 /
-├── AGENTS.md                       # repo conventions: data-access rule, [DESIGN] rule, commands
+├── AGENTS.md                       # binding engineering rules
 ├── README.md
-├── .env.example                    # VITE_DATA_SOURCE, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
-├── .eslintrc / eslint.config.js    # includes the no-direct-backend-import rule
 ├── Design.md                       # SUPPLIED LATER. Not written in this pass.
 ├── project-context.md
 ├── plan.md
+├── package.json
+├── .env.example                    # VITE_DATA_SOURCE, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+├── .commitlintrc.json               # Conventional Commits v1.0.0
+├── .prettierrc
+├── eslint.config.js                # includes the no-direct-backend-import rule
+├── .github/workflows/ci.yml        # typecheck, lint, unit tests, commit-lint on the PR range
 │
 ├── supabase/
-│   ├── migrations/                 # 0001_schema, 0002_rls, 0003_functions_views, 0004_storage, 0005_seed
+│   ├── migrations/
+│   │   ├── 0001_schema.sql         # tables, constraints, indexes
+│   │   ├── 0002_functions.sql      # app_now, current_org_id, current_role, is_manager, can_view_task
+│   │   ├── 0003_rls.sql            # policies + column-level grants
+│   │   ├── 0004_triggers.sql       # activity engine, last_activity_at, done/reopen/blocked guards
+│   │   ├── 0005_views.sql          # monitoring_task_state, employee_task_rollup
+│   │   ├── 0006_storage.sql        # private bucket + storage policies
+│   │   └── 0007_seed.sql
 │   ├── seed.sql                    # demo org, 1 manager, 2 employees, statuses, board, tasks
-│   └── tests/                      # pgTAP or SQL-based RLS assertions
+│   └── tests/                      # RLS matrix: one assertion per permission row
 │
 ├── src/
 │   ├── main.tsx
@@ -113,16 +128,17 @@ A monitoring product is easy to grow into a productivity suite. These are the mo
 │   │   ├── a11y/                   # FocusRing, LiveRegion, SkipLink, ContrastBadge
 │   │   └── layout/                 # AppShell, Sidebar, Topbar, PageHeader
 │   ├── features/
-│   │   ├── auth/                   # SignIn, ResetPassword, AcceptInvite, PrivacyNotice
+│   │   ├── auth/                   # SignIn, AcceptInvite, ResetPassword, PrivacyNotice
 │   │   ├── dashboard/              # manager home, attention queues, who-is-working strip
 │   │   ├── team/                   # employee cards, employee task list
 │   │   ├── tasks/                  # task detail, editor, checklist, comments, attachments, activity
-│   │   ├── boards/                 # board, column, card, filters
+│   │   ├── boards/                 # board view, table view, column, card, filters
 │   │   ├── my-tasks/               # employee home
 │   │   ├── inbox/                  # quick capture + triage
 │   │   ├── schedule/               # month grid, agenda list, due-date editing
 │   │   ├── reports/                # period selector, rollup table, export button
-│   │   └── settings/               # org settings, stalled threshold, statuses, people
+│   │   ├── settings/               # people, statuses, boards, general (stalled threshold)
+│   │   └── dev/                    # /dev/contrast — WCAG contrast test page
 │   ├── hooks/                      # useTasks, useTask, useSession, useMediaQuery, useKeyboard
 │   ├── lib/
 │   │   ├── data/                   # ← THE ONLY PLACE THE BACKEND IS CALLED
@@ -135,7 +151,7 @@ A monitoring product is easy to grow into a productivity suite. These are the mo
 │   │   │       └── mock/           # in-memory, interface prototyping only
 │   │   ├── monitoring/             # PURE functions mirroring the SQL view (for optimistic
 │   │   │                           #   UI + unit tests); SQL remains the source of truth
-│   │   ├── supabase/               # client singleton, admin (service-role, server-only)
+│   │   ├── supabase/               # client singleton; server-only admin client
 │   │   ├── dnd/                    # the ONLY @hello-pangea/dnd imports live here
 │   │   ├── a11y/                   # contrast.ts (WCAG relative luminance, meetsContrast)
 │   │   ├── i18n/                   # en-PH / en; date & timezone helpers
@@ -144,8 +160,31 @@ A monitoring product is easy to grow into a productivity suite. These are the mo
 │       ├── index.css               # Tailwind v4 @theme tokens, light/dark
 │       └── tokens.ts               # shared color/space/radius tokens, incl. turquoise primary
 │
-├── e2e/                            # Playwright: acceptance scenarios, multi-user
+├── e2e/                            # Playwright: acceptance scenarios, 3 accounts
 └── tests/                          # unit/component: vitest + testing-library
+```
+
+### 2.1 The data-access contract
+
+The surface components are allowed to use. Load-bearing signatures; the rest is ordinary CRUD.
+
+```
+DataSource { auth, users, settings, statuses, boards, tasks,
+             comments, attachments, activity, reports }
+
+tasks.list(filter)        assigneeIds, statusIds, due(overdue|today|week|unset),
+                          labels, priority, stalledOnly, search, sort, page
+tasks.get(id)             task + assignee + status + counts, or NotFound (never Forbidden)
+tasks.create(input)       returns the new task
+tasks.update(id, patch)
+tasks.setStatus(id, statusId, { blockedReason? })
+tasks.assign(id, userId | null)
+tasks.reopen(id, reason)
+tasks.archive(id) / tasks.restore(id)
+
+activity.forTask(id)      typed, human-renderable events
+reports.rollup({ period, userIds? })
+reports.exportCsv({ period, userIds? })   → runs as the user's session, so RLS applies
 ```
 
 **Rules encoded in this structure:**
@@ -154,6 +193,21 @@ A monitoring product is easy to grow into a productivity suite. These are the mo
 2. `src/lib/dnd/` is the only place `@hello-pangea/dnd` is imported from, so a library swap is one file.
 3. `src/lib/monitoring/` mirrors the SQL formulas in TypeScript for optimistic rendering and unit tests. If the two ever disagree, **SQL wins** and the TS version is corrected — the TS copy is never an independent source of truth.
 4. Service-role usage is confined to `src/lib/supabase/admin.ts`, which is server-only (Vercel function), never imported into `src/`.
+5. Any mutation the caller is not permitted to make resolves to **NotFound**, not Forbidden, so a denied request never confirms that a record exists.
+
+### 2.2 Route table
+
+```
+/sign-in   /invite/:token/accept   /reset-password   /privacy-notice
+/                     → manager: /dashboard      employee: /my-tasks
+/dashboard   /team   /team/:userId/tasks   /board   /inbox   /schedule
+/reports    /reports/export   /settings/{people,statuses,boards,general}
+/tasks/:taskId      ← ONE shared route for both roles; permission comes from RLS
+/my-tasks           /my-tasks/:taskId        /403   /404
+/dev/contrast       (dev/staging only)
+```
+
+There is deliberately no separate manager-only task route: a duplicated route is a duplicated thing to forget to guard. One route, and RLS decides what renders.
 
 ---
 
@@ -187,21 +241,24 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Tasks**
 
-1. VS Code project: Vite + React 19 + TypeScript, strict mode, path aliases, formatter, linter, `npm run typecheck` / `lint` / `test` / `dev` / `build` scripts, pre-commit hooks.
-2. Tailwind v4 set up with `@tailwindcss/vite` and an `@theme` token layer containing only the decided values: turquoise primary, flat surfaces, light + dark themes. Placeholder tokens for the rest, marked as awaiting `Design.md`.
-3. `[A11Y]` Baseline accessibility scaffolding: skip link, visible focus ring component, `LiveRegion` for announcements, semantic landmarks, `<html lang>`.
-4. `[A11Y]` `contrast.ts` + `ContrastBadge` (§10 of `project-context.md`) with unit tests for known WCAG ratios.
-5. Routing skeleton with route guards stubbed (`requireAuth`, `requireManager`).
-6. **Data-access module skeleton:** `types.ts`, repository interfaces, adapter interface, and a `mock` adapter with in-memory fixtures for the demo org (1 manager, 2 employees, 1 board, ~15 tasks across statuses and dates). `supabase` adapter stubbed with `throw new Error('not implemented')` so the missing implementation is loud, not silent.
-7. `VITE_DATA_SOURCE` switch + a visible dev-only "MOCK DATA" banner.
-8. Lint rule forbidding direct backend imports outside `src/lib/data/`.
-9. Supabase project created; `.env.example` written; dev/staging/prod project separation decided.
-10. `AGENTS.md` written with the three binding rules (data boundary, `[DESIGN]` dependency, a11y-as-done).
-11. Test harness: Vitest + Testing Library + Playwright, with the multi-account fixture (manager + 2 employees) and a seeding script that creates a deterministic demo org with known dates for overdue/stalled scenarios.
+1. VS Code project: Vite + React 19 + TypeScript strict, path aliases, Prettier, ESLint 9 flat config, and the `dev` / `build` / `preview` / `typecheck` / `lint` / `test` / `test:e2e` / `verify` scripts.
+2. **Commit discipline from the first commit:** `@commitlint/cli` + `@commitlint/config-conventional`, husky `commit-msg` + `pre-commit`, lint-staged on staged files, `commit-and-tag-version` for changelog/versioning, and a CI job that re-lints the commit range of every pull request. Branch prefixes (`feat/`, `fix/`, …) match the commit types. A convention nobody can fail is not a convention, so the tooling goes in before the first feature commit, not at the end.
+3. Tailwind v4 set up with `@tailwindcss/vite` and an `@theme` token layer containing only the decided values: turquoise primary, flat surfaces, light + dark themes. Placeholder tokens for the rest, marked as awaiting `Design.md`.
+4. `[A11Y]` Baseline accessibility scaffolding: skip link, visible focus ring component, `LiveRegion` for announcements, semantic landmarks, `<html lang>`.
+5. `[A11Y]` `contrast.ts` + `ContrastBadge` (§10 of `project-context.md`) with unit tests for known WCAG ratios, and the `/dev/contrast` page registered.
+6. Routing skeleton with route guards stubbed (`requireAuth`, `requireManager`).
+7. **Data-access module skeleton** per the §2.1 contract: `types.ts`, repository interfaces, adapter interface, and a `mock` adapter with in-memory fixtures for the demo org (1 manager, 2 employees, 1 board, ~15 tasks across statuses and dates). `supabase` adapter stubbed with `throw new Error('not implemented')` so the missing implementation is loud, not silent.
+8. `VITE_DATA_SOURCE` switch + a visible dev-only "MOCK DATA" banner + a build-time guard that prevents monitoring routes running on mock.
+9. Lint rule forbidding direct backend imports outside `src/lib/data/`, and a second rule confining `@hello-pangea/dnd` imports to `src/lib/dnd/`.
+10. Supabase project created; `.env.example` written; dev/staging/prod project separation decided.
+11. `AGENTS.md` written with the four binding rules (data boundary, `[DESIGN]` dependency, a11y-as-done, commit conventions).
+12. Test harness: Vitest + Testing Library + Playwright, with the multi-account fixture (manager + 2 employees) and a seeding script that creates a deterministic demo org with known dates for overdue/stalled scenarios.
+13. `README.md` written and kept current — it is the first thing a new contributor and the client will read.
 
 **Testing checkpoint (P0)**
 
 - `typecheck`, `lint`, and `test` all pass on a clean clone; CI runs them.
+- A deliberately malformed commit message is **rejected** by the `commit-msg` hook, and CI rejects the same message in a test branch. A bad commit cannot land.
 - Build succeeds; the app boots to a placeholder route in both themes.
 - Changing `VITE_DATA_SOURCE=supabase` produces a visible, loud failure (not a blank screen).
 - `contrastRatio('#000', '#fff')` returns 21; `contrastRatio('#777', '#fff')` returns < 4.5 and the badge reports fail.
@@ -240,8 +297,10 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 - Employee A attempts `UPDATE tasks SET due_at = ...` on their own task → **rejected by column grants**. Confirmed by direct SQL client attempt, not only by hiding the UI control.
 - Employee A queries all tasks → receives only their own. Verified by running a `select * from tasks` in the browser console as Employee A and inspecting the result set.
 - Employee A inserts a row into `activity_events` directly → rejected (no INSERT policy).
-- Manager sees all tasks. Employee A cannot see Employee B's task by ID, including by direct URL to `/tasks/:id` → 403.
+- Manager sees all tasks. Employee A cannot see Employee B's task by ID, including by direct URL to `/tasks/:id` → **not found**, not forbidden (§2.1 rule 5).
 - Reassign a task; the old assignment row has `is_current=false` with `unassigned_at` set, and the activity log shows both events.
+- **A manager action does not refresh an assignee's freshness.** Employee A has a task with an old `last_activity_at`. The manager extends its due date and renames it → both events appear in the log, and `last_activity_at` is **unchanged**. A pure board reorder writes **no** event at all. (§5.2.2)
+- Boundary test: with `SET LOCAL app.now`, a task at `stalled_days − 1 minute` is not stalled and at `stalled_days + 1 minute` is, using the production view.
 - Reset a password, sign in on all three browsers simultaneously; sessions are independent.
 - `npm run typecheck && lint && test` green; full RLS matrix suite green.
 
@@ -265,6 +324,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 6. `[DESIGN]` Drag-and-drop between columns via the `src/lib/dnd/` adapter and `@hello-pangea/dnd`: optimistic move, rollback on error, position written as fractional midpoint.
 7. `[A11Y]` Keyboard drag path: lift, move, drop, cancel via keyboard with a live-region announcement of the result. Tested with the keyboard only.
 8. `[DESIGN]` Board filters (assignee, priority, label, due window, "only stalled") and a filter state in the URL so a filtered board can be linked.
+8b. `[DESIGN]` Board **Table view**: the same task set in a sortable table (last activity, due date, status, assignee, stalled), sharing the Board's filters and URL state. Column headers are real `<th scope>`, sorting is keyboard-operable, and the row count is asserted to match the Board view. **No Timeline and no Map view.**
 9. `[DESIGN]` Task detail: all fields, checklist, comments, activity log rendering (human-readable sentences generated from `activity_events`).
 10. `[A11Y]` Empty states, loading states, and error states for every list and form; focus moves sensibly on route change; dialogs trap focus and restore it on close.
 11. Data-access adapter completion for `tasks`, `boards`, `activity`.
@@ -274,9 +334,10 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 - Manager creates and assigns a task to Employee A; it appears in the manager's board in the correct column, and the assignment history records who assigned it and when.
 - Manager drags the card to In progress: status, `last_activity_at`, `started_at` all update, and one `status_changed` activity event exists. No duplicate events on re-render or refresh.
-- Manager reorders a card and refreshes in all three browsers: order persists and is identical everywhere.
+- Manager reorders a card and refreshes in all three browsers: order persists and is identical everywhere — and **no activity event was written** for the reorder.
+- Manager switches to the **Table view** and sorts by last activity, due date, and stalled; the sort and filters persist in the URL, and the row count matches the Board view.
 - Manager attempts to remove a card: soft-deleted, recoverable, and it disappears from all boards immediately.
-- Keyboard-only: a card can be moved between columns and the change is announced; the drag works with no mouse and no touch.
+- Keyboard-only: a card can be moved between columns and the change is announced; the drag works with no mouse and no touch. The Table view is fully operable with arrow keys.
 - Employee A reloads: sees their own task in My Tasks shell; Employee B does not see it. (Full My Tasks UI is Phase 3; here we confirm the read boundary.)
 - Overdue styling: a task with a past `due_at` shows the overdue treatment on the card without a page refresh after the minute rolls over (derived at read time, not a stored flag).
 
@@ -335,7 +396,8 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 9. Manager actions surfaced from the attention queues: reassign, extend due date (with the change logged), reopen, comment, mark done.
 10. `[A11Y]` Relative-time strings are never the only signal ("4d ago" is paired with the absolute timestamp in a `title`/tooltip and in the text for screen readers).
 11. Performance: the Dashboard must be a bounded number of queries against indexed columns; add index coverage and verify with `EXPLAIN` on a seeded org of realistic size.
-12. Delete the mock adapter's route through this feature: `monitoring` code paths must not be reachable with `VITE_DATA_SOURCE=mock` (guarded by a build-time check).
+12. Global search (`/`): own tasks for an employee, org-wide for a manager, enforced by RLS rather than by filtering client-side. Searches title, description, and comments.
+12b. Delete the mock adapter's route through this feature: `monitoring` code paths must not be reachable with `VITE_DATA_SOURCE=mock` (guarded by a build-time check).
 
 **Testing checkpoint (P4)** — *multi-user, 1 manager + 2 employees, three separate browsers; a fixed clock is used to test thresholds*
 
@@ -346,6 +408,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 - Blocked + stale appears in the blocked-stalled subgroup, distinct from stalled-moving.
 - Employee A opens their own My Tasks in their own browser and sees the same stalled/overdue badge on the same task that the manager sees. The numbers match, character for character.
 - `require_done_review` toggled on: a new status appears, employees can no longer move a task to Done, and the completion numbers do not count pending items.
+- Global search: the manager finds a task by a word in its **comment**; Employee A searching for the same word does not see it. Verified in the network payload, not by whether it is hidden with CSS.
 - Dashboard loads in under 1 second against a seeded org of 1 manager and 50 employees with 5,000 tasks.
 
 **Exit criteria:** the manager answers G1, G2, and G3 from the Dashboard alone, and the employee cannot see a different truth.
@@ -513,7 +576,7 @@ Executable tests that prove the goal. Each names the accounts involved. **A = Ma
 ### (f) An employee cannot see another employee's tasks
 
 1. **B** knows the URL of one of **C**'s task IDs (obtainable from the database, not the UI).
-2. **B** navigates to it → a 403 page, not a blank screen and not a crash. No task content in the response body, no title in the `<title>`, no data in the network payload.
+2. **B** navigates to it → a **not-found** page, not a blank screen and not a crash — and **not a 403**. A 403 would confirm that the task id is real, which is itself a leak and an enumeration vector. No task content in the response body, no title in `<title>`, no data in the network payload. (A **manager** attempting the same URL gets a genuine 403 on a resource they can see but may not change.)
 3. **B** runs `supabase.from('tasks').select('*')` in the browser console → only **B**'s rows return.
 4. **B** runs `supabase.from('tasks').select('*').eq('id', '<C task id>').single()` → an empty result, enforced by RLS.
 5. **B** attempts to read `activity_events` for **C**'s task → empty.
@@ -521,8 +584,9 @@ Executable tests that prove the goal. Each names the accounts involved. **A = Ma
 7. **B** attempts to insert a task assigned to **C** → rejected.
 8. **B** requests `/reports`, `/settings`, `/team` → blocked, and a direct data-layer call returns nothing.
 9. **B** attempts to read the attachment storage path of **C**'s task directly → signed URL request refused.
+10. **B** attempts to set `last_activity_at` on their own task → rejected by column grants, and no activity event appears.
 
-**Pass:** all nine attempts fail **at the database**, verified with a SQL client as well as in the UI. A UI-only block fails this scenario.
+**Pass:** all ten attempts fail **at the database**, verified with a SQL client as well as in the UI, and no response distinguishes "does not exist" from "not yours". A UI-only block fails this scenario.
 
 ### (g) The manager exports a completion report
 
@@ -611,13 +675,72 @@ Deferred means: named, scoped, and agreed to be *after* the phases above. Not "m
 
 ---
 
-## 7. Working agreements for the build
+## 7. Test strategy, fixtures, rollout, and sizing
+
+### 7.1 Four test layers
+
+| Layer | Tool | What it proves | Why it exists |
+| --- | --- | --- | --- |
+| **Unit** | Vitest | The §5 formulas as pure functions, with fixed inputs and boundary values at exactly N | The maths, isolated from everything |
+| **SQL / RLS** | SQL assertions against Postgres | One test per row of the permissions matrix in `project-context.md` §3.2 | **The layer that matters most.** A UI-only block is not enforcement; the database is what stops a query bug from leaking one employee's rows to another |
+| **Component** | Vitest + Testing Library | Status actions, flag rendering, empty/loading/error states, focus behaviour, contrast in both themes | Behaviour of a component without a browser or a database |
+| **E2E** | Playwright | The nine acceptance scenarios in §4 | The goal itself, end to end |
+
+**How the multi-user requirement is satisfied in CI.** Playwright's `browser.newContext()` gives each account isolated cookies and storage, so one automated run *is* the "one manager and two employees on separate browsers" checkpoint — not a simulation of it. The manual version on three real browsers or profiles still runs before Phase 7 exits, because the client-facing checkpoint is about the real thing, not a harness.
+
+**No clock mocking, and no waiting three days.** See `project-context.md` §5.8: thresholds are asserted either with `SET LOCAL app.now` (exact boundaries, against production SQL) or with backdated seed rows. Both exercise the real code path. A test that mocks the formula is not a test of the formula.
+
+### 7.2 Migration order
+
+`0001_schema` → `0002_functions` (`app_now`, `current_org_id`, `current_role`, `is_manager`, `can_view_task`) → `0003_rls` (policies + column grants) → `0004_triggers` (the activity engine from `project-context.md` §5.2.1, `last_activity_at` freshness rules from §5.2.2, done/reopen/blocked guards) → `0005_views` (`monitoring_task_state`, `employee_task_rollup`, `employee_period_rollup`) → `0006_storage` (private bucket + storage policies) → `0007_seed`.
+
+Each migration is independently re-runnable. **Phase 1 is the highest-risk phase in the plan** — it is the one that has to be right before anything else is worth building.
+
+### 7.3 Seed data
+
+One demo organization, 1 manager + 2 employees, ~15 tasks chosen so that **every formula in §5 has a fixture**. Deterministic IDs, so assertions can name a task rather than searching for one.
+
+The fixture set must contain: due in 2 days / due today / due yesterday; `last_activity_at` at 1 hour / 2 days / 4 days / never; all four statuses; one task stalled-but-not-overdue and one overdue-but-not-stalled; one unassigned Inbox item 5 days old; one blocked-and-stalled; one reopened; one with a checklist, comments, and an attachment; one task owned by the manager.
+
+The same seed is the **Demo org** the client explores during rollout, with fictional people and synthetic data only.
+
+### 7.4 Rollout to the client
+
+| Step | What happens | Gate |
+| --- | --- | --- |
+| 1 | Demo org with fictional employees; the manager and team explore freely | The manager can explain every number on the Dashboard |
+| 2 | Manager brief: what each metric means, how to change the stalled threshold, how to export | — |
+| 3 | Team walkthrough with the written employee guide: exactly what is recorded, and what is not | Every employee acknowledges the privacy notice at first login |
+| 4 | Real organization created; real employees invited; no real data yet | — |
+| 5 | One week running both ways (paper or chat, and the app) | No discrepancy the team cannot explain |
+| 6 | Cutover | Client sign-off: the manager answers their own three questions in under 10 seconds |
+
+No real employee data enters the system before step 4. A product that observes performance and is introduced covertly loses the data quality it depends on.
+
+### 7.5 Sizing
+
+Very rough, for **one experienced full-stack developer** who already knows Supabase, RLS, and this stack.
+
+| Phase | Days | | Phase | Days |
+| --- | --- | --- | --- | --- |
+| 0 | 3–4 | | 4 | 7–9 |
+| 1 | 6–8 | | 5 | 4–5 |
+| 2 | 7–9 | | 6 | 4–5 |
+| 3 | 6–8 | | 7 | 5–7 |
+| | | | **Total** | **~42–55** |
+
+The schedule risks are not technical. They are `Design.md` slipping, and a change to the stalled threshold or the privacy-notice flow arriving after Phase 4 — both of which cost about a week, not a redesign. **Phases 0–4 are the product**; everything after is extension.
+
+---
+
+## 8. Working agreements for the build
 
 1. **No scope resolution by assumption.** Anything on the §11 open-questions list in `project-context.md` that would change scope, cost, or behaviour is asked, not guessed.
-2. **The cut list stays cut.** Social media planning, compose-post, platform selectors, AI captions, media library, and content-approval templates do not reappear in any form.
+2. **The cut list stays cut.** Social media planning, compose-post, platform selectors, AI captions, media library, content-approval templates, and the Timeline and Map board views do not reappear in any form.
 3. **Monitoring is not surveillance.** A feature that would let a manager learn something about a person that the person cannot see about themselves is rejected at design time, not at review time.
 4. **One data boundary.** Components never call the backend; the mock adapter never satisfies a monitoring checkpoint.
 5. **`[DESIGN]` is a real dependency.** Interface tasks are not started against invented visual specifications. If `Design.md` slips, the slip moves UI work, not the data and logic work behind it.
 6. **Accessibility is done, not polish.** No phase closes with an unresolved keyboard or contrast failure.
 7. **A checkpoint is a checkpoint.** If a phase's multi-user test cannot be run with one manager and two employees on separate browsers, the phase is not done.
 8. **Numbers are reproducible.** Every figure on the Dashboard and in Reports must be hand-checkable from the exported CSV, using the formulas written down in `project-context.md`.
+9. **Conventional Commits, enforced.** commitlint runs in a `commit-msg` hook and again in CI. Do not bypass it with `--no-verify` — fix the message. Branch prefixes match the commit type.

@@ -1,9 +1,9 @@
 # project-context.md
 
-**Project:** Employee Task Monitoring System (working title — not a brand name; see §9 Originality)
-**Status:** Planning document. No application code exists yet.
+**Project:** Employee Task Monitoring System (`[PRODUCT NAME]` — not yet chosen; see §6.5 Originality)
+**Status:** Planning document. No application code exists yet; Phase 0 has not started.
 **Last updated:** 2026-09-28
-**Companion document:** `plan.md` (build order, acceptance scenarios)
+**Companion documents:** `plan.md` (build order, acceptance scenarios) · `README.md` (stack, scripts, conventions) · `AGENTS.md` (binding engineering rules)
 
 ---
 
@@ -116,6 +116,7 @@ A **multi-team** concept (one employee on several teams) is modelled but **not e
 - Enforcement lives in Postgres (Supabase row-level security + column-level grants), not in React.
 - The browser never receives a row the user is not allowed to read. There is no endpoint that returns "all tasks, filtered client-side".
 - Service-role credentials are used **only** in server-side, audited code paths (user invitation, CSV export of large ranges). They must never be shipped to the client.
+- **Do not confirm the existence of what a caller may not see.** A request for a task the caller is not entitled to resolves to *Not found* (404), not *Forbidden* (403), for every role. A 403 tells an employee that somebody else's task id is real, which is a leak and is itself a way to enumerate other people's work. Managers still get a genuine 403 on a resource they can see but may not change — the existence is already known to them.
 
 ---
 
@@ -158,10 +159,11 @@ Kanban-style. Columns map to statuses (§5.1).
 
 - One default board per organization ("All Tasks"); additional boards can be created later, and a task belongs to at most one board.
 - Cards show: title, assignee avatar, due date with overdue styling, priority, label chips, checklist progress (e.g. 2/5), comment and attachment counts, and a stalled/overdue indicator.
-- Drag a card between columns to change status. This writes: status change, `last_activity_at`, `done_at`/`started_at` side effects, and an activity event — in one transaction.
+- Drag a card between columns to change status. This writes the status change, the `started_at`/`done_at` side effects, and an activity event — in one transaction. It refreshes `last_activity_at` **only when the person dragging is the assignee**: a manager rearranging the board does not make an employee's stalled task look active (§5.2.2).
 - Filters: assignee, priority, label, due (overdue / today / this week / no date), and "only stalled".
 - Managers may rename columns; the underlying status is shared across boards.
 - Keyboard equivalent: focus a card, use arrow keys / space to lift, move, and drop, with a live-region announcement. Drag-and-drop without a keyboard path does not count as done.
+- **Two views of the same task set: Board and Table.** The Table is sortable (last activity, due date, status, assignee, stalled) and shares the Board's filters and URL state. It exists because scanning across tasks is a different job from arranging them, and doing it on the Kanban board alone is genuinely harder. There is **no Timeline view and no Map view** — they answer "when" and "where", which is not what this product is for.
 
 ### 4.4 My Tasks (employee home)
 
@@ -242,15 +244,46 @@ Model: a `statuses` table per organization, each row carrying `is_done`. Any sta
 
 ### 5.2 Activity and `last_activity_at`
 
-An **activity event** is a row in `activity_events`. Event types:
+An **activity event** is a row in `activity_events`, written by a `SECURITY DEFINER` trigger. Clients have no INSERT, UPDATE, or DELETE policy on that table.
 
-`task_created`, `status_changed`, `reopened`, `assignee_changed`, `due_date_changed`, `priority_changed`, `title_edited`, `description_edited`, `checklist_item_added`, `checklist_item_ticked`, `checklist_item_unticked`, `comment_added`, `attachment_added`, `attachment_removed`, `label_changed`, `label_added`, `label_removed`.
+#### 5.2.1 What writes what
 
-**`last_activity_at`** is stored on `tasks` and maintained by a database trigger that stamps it to `now()` on every activity event for that task. It is initialized to the task's `created_at` on insert.
+| Source | Condition | Event `type` | `field_name` |
+| --- | --- | --- | --- |
+| `tasks` INSERT | always | `task_created` | — |
+| `tasks` UPDATE | `status_id` changed | `status_changed` | `status_id` |
+| `tasks` UPDATE | leaving a status with `is_done = true` | `reopened` | `status_id` |
+| `tasks` UPDATE | `assignee_id` changed | `assignee_changed` | `assignee_id` |
+| `tasks` UPDATE | `due_at` changed | `due_date_changed` | `due_at` |
+| `tasks` UPDATE | `priority` changed | `priority_changed` | `priority` |
+| `tasks` UPDATE | `title` changed | `title_edited` | `title` |
+| `tasks` UPDATE | `description` changed | `description_edited` | `description` (truncated) |
+| `tasks` UPDATE | `position` / `column_id` changed **and nothing else** | **no event** | — |
+| `tasks` UPDATE | `deleted_at` set / cleared | `task_archived` / `task_restored` | — |
+| `task_checklist_items` INSERT / UPDATE / DELETE | | `checklist_item_added` / `checklist_item_ticked` / `checklist_item_unticked` / `checklist_item_removed` | `title` |
+| `comments` INSERT / UPDATE | | `comment_added` / `comment_edited` | `body` (excerpt) |
+| `comments` soft delete | | `comment_deleted` | `body` (excerpt) |
+| `attachments` INSERT / soft delete | | `attachment_added` / `attachment_removed` | `file_name` |
+| `task_labels` INSERT / DELETE | | `label_added` / `label_removed` | `label_name` |
+
+#### 5.2.2 Freshness integrity
+
+Two rules decide which of those events refresh `last_activity_at`, and they are the difference between a useful signal and one that can be faked by accident:
+
+1. **Only the assignee's own work refreshes it.** The stamp is applied only when `actor_id = tasks.assignee_id` (plus task creation). A manager extending a deadline, renaming a task, or shuffling it between boards must **not** make an employee's stalled task look active. Otherwise one tidy-up session makes an entire non-working team appear to be working.
+2. **Reordering a card is not work.** A `position` / `column_id` change with no status change writes no activity event at all. If dragging a card around the board refreshed the task, the stalled signal could be defeated by an idle five seconds of mouse movement.
+
+Two consequences, both intended:
+
+- A task reassigned to a new assignee is **still** stalled until the new assignee acts. The Dashboard shows the reassignment timestamp so "just reassigned, not started yet" is distinguishable from "ignored".
+- A manager editing a task on an employee's behalf does not count as that employee's progress. It shows in the activity log, attributed to the manager.
+
+This rule governs `is_active` and `is_stalled` only. It does **not** touch `done_at` or the completion rate: if a manager marks a task Done, it counts as done and moves the number. Otherwise a manager could quietly understate a team's completion by declining to press the button — and the number would be measuring the manager, not the team.
 
 ```
-last_activity_at(task) = max( created_at(activity_events where task_id = task.id) )
-                        , tasks.created_at
+last_activity_at(task) = max( created_at(activity_events
+                         where task_id = task.id and actor_id = task.assignee_id) )
+                       , tasks.created_at
 ```
 
 **Trigger-based, not client-based.** The client must not be able to set `last_activity_at` directly (it is not in any client's column grant list), so a task cannot be kept "fresh" by an unlogged write.
@@ -258,7 +291,7 @@ last_activity_at(task) = max( created_at(activity_events where task_id = task.id
 **Visible activity (goal question 1):** a task is considered *actively worked on* when it has had activity within the **active window**.
 
 ```
-is_active(task) = task.last_activity_at >= now() - interval '24 hours'
+is_active(task) = task.last_activity_at >= app_now() - interval '24 hours'
                   AND task.status_id is not a done status
 ```
 
@@ -268,7 +301,7 @@ The active window is an organization setting `active_window_hours`, default **24
 
 ```
 is_overdue(task) = task.due_at IS NOT NULL
-                   AND task.due_at < now()
+                   AND task.due_at < app_now()
                    AND task.status is NOT a done status
 ```
 
@@ -281,7 +314,7 @@ is_overdue(task) = task.due_at IS NOT NULL
 ```
 is_stalled(task) = task.assignee_id IS NOT NULL
                    AND task.status is NOT a done status      -- includes not_started, in_progress, blocked
-                   AND task.last_activity_at < now() - (settings.stalled_days || ' days')::interval
+                   AND task.last_activity_at < app_now() - (settings.stalled_days || ' days')::interval
 ```
 
 - `settings.stalled_days` is an organization setting. **Default N = 3 calendar days.** Recommended range 1–30, enforced in the settings form.
@@ -364,6 +397,30 @@ Displayed as: open count, with overdue and stalled shown as sub-counts, and "old
 - The manager and the employee can never see different numbers for the same task.
 - There is no table in which "this employee stalled" is recorded as a fact about a person — the same transparency rule as §1.2, enforced structurally.
 
+### 5.8 The time model, and how boundary tests run
+
+Every formula above compares **stored** values against "now". That makes the whole monitoring layer a pure function of the database, and it means the tests never need a clock-mocking library and nobody ever waits three days to check a threshold.
+
+**`app_now()`** is a single `STABLE` SQL function used by every derived view and function instead of bare `now()`:
+
+```sql
+create function app_now() returns timestamptz
+  language sql stable as $$
+    select coalesce(current_setting('app.now', true)::timestamptz, now())
+  $$;
+```
+
+In production `app.now` is never set, so `app_now()` is `now()`. In a test session, `SET LOCAL app.now = '2026-10-01 09:00:00+08'` pins "now" exactly, so a boundary is asserted at `N days − 1 minute` and `N days + 1 minute` against the real production SQL. It can only change the caller's own query result — it grants no access to anything the caller could not already read.
+
+Two test techniques, and no third:
+
+| Technique | Use it for |
+| --- | --- |
+| `SET LOCAL app.now` | Exact threshold boundaries, end-of-day due dates, period boundaries |
+| Backdated seed rows (rewrite `last_activity_at` / `due_at` to `now() ± interval`, with matching backdated events) | Realistic "3 days ago" data on the Dashboard, and the whole `monitoring_task_state` code path |
+
+Both exercise production code. A test that mocks the formula itself is not a test of the formula.
+
 ---
 
 ## 6. Principles (binding)
@@ -385,7 +442,15 @@ The system stores employee names, work contact details, task text, comments, and
 - Because the system exists to observe employee performance, the client should be told plainly that employee notice and agreement is a practical precondition, and that a covert deployment would damage both the tool and the trust the tool depends on.
 
 ### 6.5 Originality
-Boards, lists, cards, and drag-and-drop are established patterns and are used. Nothing is copied from another product: not a name, logo, wordmark, icon set, illustration, illustration style, marketing copy, or brand colour palette. Icons come from an open-source set (planned: Lucide) with its licence recorded. The turquoise primary, the flat treatment, and the light/dark theming are this product's own; `Design.md` will specify the rest and must not restate any other product's identity.
+
+Boards, lists, cards, and drag-and-drop are established patterns and are used. Nothing is copied from another product: not a name, logo, wordmark, icon set, illustration, illustration style, marketing copy, or brand colour palette. Icons come from Lucide with its licence recorded. The turquoise primary, the flat treatment, and the light/dark theming are this product's own; `Design.md` will specify the rest and must not restate any other product's identity.
+
+**This is a fresh build.** The project's earlier direction was a Trello-inspired app whose interface was a port of another product, complete with that product's CSS file, wrapper class, and component names. None of that carries forward. Concretely:
+
+- No third-party design system, stylesheet, or wrapper class is copied or renamed. Components, class names, and CSS are authored for this product.
+- No previous repository's component library is ported in, in whole or in part.
+- The former feature set — social media planning, a weekly content grid, a compose-post modal, a platform selector, a media library, content-approval templates, and board views such as Timeline and Map — is removed and is not reintroduced in any form, including as a "template" (§9.1).
+- The product name is undecided. It must not be the name, wordmark, or brand of any existing product, and it must not be inherited from the previous direction.
 
 ---
 
@@ -395,9 +460,11 @@ Boards, lists, cards, and drag-and-drop are established patterns and are used. N
 VS Code. Deployed on Vercel.
 
 ### 7.2 Frontend
-- **React 19** + **Vite** + **TypeScript**.
-- **Tailwind CSS v4** (CSS-first `@theme` tokens, `@tailwindcss/vite` plugin) — decision recorded because v4 moves the token definition into CSS and the plan's theming/contrast work depends on it.
-- Routing, forms, and validation: chosen in Phase 0, no framework lock-in assumed.
+- **React 19 + Vite + TypeScript 5**, as a single-page application. **Decision: Vite SPA rather than a server-rendered framework.** This is a private, authenticated, highly interactive board with no SEO requirement; server rendering buys nothing here, and a client-side-only data-access module keeps the RLS session context in exactly one place. Service-role work that genuinely needs a server (bulk CSV export, invitations) becomes a small Vercel function.
+- **Tailwind CSS v4** (CSS-first `@theme` tokens, `@tailwindcss/vite` plugin) — recorded because v4 moves token definition into CSS and the theming/contrast work depends on it.
+- **React Router** (data router) with route guards in `src/routes/guards.tsx`.
+- **TanStack Query v5** for server state. Not an API layer — the Supabase SDK is the transport — but the optimistic status moves with rollback, and cache invalidation after every trigger-written mutation, are exactly what it exists for. Hand-rolling that is a known source of bugs.
+- **Zod** for validation at the data-access boundary, so a malformed row cannot reach a component; **React Hook Form** for forms.
 - **Drag and drop: `@hello-pangea/dnd`.** Reasons: it is the maintained community fork of `react-beautiful-dnd` (v18.0.1, Apache-2.0) and declares support for React 18 and 19, which keeps us on current React; it has a real keyboard-accessible drag mode with screen-reader announcements built in, which is required here (keyboard support is part of "done", not polish); and it is a drop-in for the canonical Kanban interaction model, so the board is cheap and correct. **Caveat and boundary:** it is a list/board library, not a calendar library — the Schedule drag-reschedule (§4.6) will not use it, and will use a small purpose-built pointer/keyboard interaction on day cells. All `@hello-pangea/dnd` usage is confined to one adapter module (`src/lib/dnd/`) so a future React or library migration is a single-file change.
 - Visual direction is **pending `Design.md`**. No visual specifications are invented in this plan. Already decided: flat, professional, business look; **no glassmorphism, no neumorphism**; **turquoise primary**; **light and dark themes**; text readable on any background.
 
@@ -413,7 +480,10 @@ Why this fits the product specifically:
 3. **Atomic writes matter for monitoring.** A status change must update `tasks.status_id`, `tasks.last_activity_at`, `tasks.done_at`, and insert an `activity_events` row together or not at all. If the activity log can be lost, the product's core signal is unreliable. A single Postgres transaction gives this; Firestore would need careful batching.
 4. **Cheap reads for dashboards.** Postgres computes counts server-side; a manager dashboard that is one indexed aggregate query does not bill per document read.
 
-Firebase was considered and rejected for this product, not in principle: Firestore rules *can* enforce per-document access, but (a) the period rollup and the derived monitoring flags would have to be computed and duplicated in client code, risking exactly the manager/employee disagreement we are trying to prevent, and (b) per-document read pricing makes an always-open monitoring dashboard noticeably more expensive over time than a small, indexed SQL query.
+Two alternatives were considered and rejected for this product, not in principle:
+
+- **Firebase Firestore.** Its rules *can* enforce per-document access, but (a) the period rollup and the derived monitoring flags would have to be computed and duplicated in client code, risking exactly the manager/employee disagreement we are trying to prevent, and (b) per-document read pricing makes an always-open monitoring dashboard noticeably more expensive over time than a small, indexed SQL query.
+- **A self-hosted Express + document-database API** (the shape of the project's earlier direction). Access control there is JWT middleware plus a filter in every repository function. That is real backend enforcement and would not be merely cosmetic, but it has two properties this product cannot accept: nothing in the database prevents a future query from returning the wrong rows, so the guarantee rests entirely on every future developer remembering the rule; and the §5 formulas get reimplemented in application code, which is where the manager and employee views would drift apart. RLS moves both guarantees into the database, where a test can assert them directly.
 
 ### 7.4 Data access layer (binding architectural rule)
 
@@ -527,6 +597,7 @@ organizations 1─1 settings (key/value)
 
 ### 8.3 Views and functions
 
+- `app_now()` — the single `STABLE` "now" used by every derived view and function, so tests can pin the clock with `SET LOCAL app.now` (§5.8).
 - `monitoring_task_state` — `task_id`, `is_active`, `is_overdue`, `hours_overdue`, `is_stalled`, `days_since_activity`, `is_blocked`, `is_done`. `security_invoker = true` so RLS still applies to the underlying rows. This view is the only place the §5 formulas are implemented, and it is the single source of truth for both roles.
 - `employee_task_rollup` — per-employee open / active / overdue / stalled counts. Manager-only readable.
 - `employee_period_rollup(org, user, period_start, period_end)` — the §5.5 metrics. Manager-only readable.
@@ -614,22 +685,33 @@ Already decided and not to be re-opened: flat professional business look; no gla
 
 Do not resolve these silently where the answer changes scope, cost, or what gets built. Each has a recommended default so the plan can move, but the default is a placeholder until the client or the user confirms.
 
-| # | Question | Why it matters | Recommended default | Blocks |
+### 11.1 Answered
+
+These were open; they are now decisions and live in the decision log (§12). They are kept here so the reasoning stays visible.
+
+| # | Question | Answer |
+| --- | --- | --- |
+| **Q1** | Does "Done" require manager verification? | **No.** Employee marks Done, manager can reopen. `require_done_review` and a `done_pending_review` status exist so it can be switched on without a redesign |
+| **Q2** | Default stalled threshold N, and calendar or working days? | **3 calendar days**, configurable 1–30, live. Re-validate with the real manager in week 1 of use |
+| **Q3** | Can employees create their own tasks? | **Yes, self-assign only.** Assigning to another person is rejected by the database |
+| **Q6** | Attachment storage and limits? | **Private Supabase bucket, short-lived signed URLs, 10 MB, images + PDF + office docs, no scanning in v1**, server-enforced, purged with the task |
+| **Q7** | Default report period? | **Calendar month** in the organization timezone, switching to the pay cycle once §2.1 is known |
+| **Q14** | Is employee notice a precondition of deployment? | **Yes.** Manager brief, written employee guide, privacy notice acknowledged at first login, fictional Demo org for training first |
+
+### 11.2 Still open
+
+| # | Question | Why it matters | Default in force | Blocks |
 | --- | --- | --- | --- | --- |
-| **Q1** | Does "Done" require manager verification? | Adds a hidden approval queue that itself needs monitoring; changes the status model, the Dashboard, and the completion-rate denominator | **No.** Employee marks Done; manager can reopen. `require_done_review` setting exists, default off | Status model, Dashboard, Reports |
-| **Q2** | What is the default stalled threshold N, and calendar days or working days? | The single most sensitive number in the product; too low = noise, too high = misses problems | **3 calendar days**, configurable 1–30. Working days need a holiday calendar the client has not supplied | §5.4, Dashboard, Team page |
-| **Q3** | Can employees create their own tasks, or only submit to the Inbox for assignment? | Changes RLS on `tasks` insert, the completion-rate denominator, and whether an employee can be "overloaded by choice" | **Yes, self-assign only**; no assigning to others | RLS, Inbox, My Tasks, Reports |
-| **Q4** | Can the manager also be an assignee of tasks? | Affects whether the manager appears in workload views and whether manager tasks count in reports | **Yes**, but the manager's own tasks are excluded from their own report by default | Reports, Team page, RLS |
-| **Q5** | Can one employee belong to multiple teams, and is "team" even used in v1? | Determines whether `teams`/`team_members` are live or dormant, and whether RLS is org-scoped or team-scoped | **Single team in v1**; tables exist, no UI. Team-scoped access deferred | Data model, RLS, Team page |
-| **Q6** | How are attachments stored and limited? (max size, allowed types, retention, private vs. signed URLs, image preview, virus scanning) | Affects storage cost, RLS on the storage bucket, and a retention obligation under §6.4 | Supabase private bucket, signed URLs, 10 MB, images + PDF + office docs, no scanning in v1, purge on task purge | Task detail, Phase 1 storage policies |
-| **Q7** | Period default: calendar month, or the client's pay/billing cycle? | Changes the headline completion number the client will judge the product by | Month until §2.1 is filled in, then the pay cycle | Reports |
-| **Q8** | Should a reopened task be removed from the historical period where it was counted as complete? | Affects whether last month's report changes after today | **Yes**, remove it and say so in the UI. Alternative: keep it and add a separate "reopened" column | Reports, CSV |
-| **Q9** | What happens to a deactivated employee's open tasks? | Affects workload reports and whether work silently disappears | Reassignment prompt at deactivation; tasks stay assigned to the deactivated profile until reassigned; excluded from active counts, retained in history | Team page, Reports |
-| **Q10** | Do due dates need time-of-day, or is end-of-day enough? | Affects the timezone rules in §5.3 and every overdue test | **End of day in the org timezone**; a true deadline time is deferred | Overdue formula, Schedule |
-| **Q11** | Multiple managers — is one enough, and is there a manager-of-managers need? | Affects `role` modelling and any future permission split | **Yes, multiple managers, same permissions** | Roles, RLS |
-| **Q12** | Are comment notifications required (in-app, email), or is checking the app enough? | Notifications are not in the goal; email is an integration and out of scope | **No notifications in v1**; in-app only. Revisit only if the client says the manager will not open the app | Inbox, Dashboard |
-| **Q13** | Client, business, industry, team size, timezone, and pay cycle (§2.1) | Headcount and timezone affect period logic, the Team page, and the real-data testing checkpoint | Leave as placeholders | Reports, Phase 1 test fixtures, Phase 7 |
-| **Q14** | Is employee notice/agreement a precondition of deployment? | A product that observes performance is deployed very differently from one that is silently introduced | **Yes.** Manager informs the team, privacy notice acknowledged at first login, Demo org for training | Phase 1, Phase 7 |
+| **Q4** | Can the manager also be an assignee of tasks? | Whether the manager appears in workload views and whether manager tasks count in reports | **Yes**, but the manager's own tasks are excluded from their own report | Reports, Team page, RLS |
+| **Q5** | Can one employee belong to multiple teams, and is "team" even used in v1? | Whether `teams`/`team_members` are live or dormant, and whether RLS is org-scoped or team-scoped | **Single team in v1**; tables exist, no UI | Data model, RLS, Team page |
+| **Q8** | Should a reopened task be removed from the historical period where it was counted complete? | Whether last month's report changes after today | **Yes**, remove it and say so in the UI | Reports, CSV |
+| **Q9** | What happens to a deactivated employee's open tasks? | Whether work silently disappears from workload reports | Reassignment prompt at deactivation; tasks stay on the deactivated profile until reassigned; excluded from active counts, retained in history | Team page, Reports |
+| **Q10** | Do due dates need time-of-day, or is end-of-day enough? | The timezone rules in §5.3 and every overdue test | **End of day in the org timezone**; a true deadline time is deferred | Overdue formula, Schedule |
+| **Q11** | Multiple managers — is one enough, and is a manager-of-managers level needed? | `role` modelling and any future permission split | **Yes, multiple managers, same permissions** | Roles, RLS |
+| **Q12** | Are notifications required (in-app, email), or is opening the app enough? | Notifications are not in the goal; email is an integration and out of scope | **No notifications in v1.** Revisit only if the client says the manager will not open the app | Inbox, Dashboard |
+| **Q13** | **Client name, business, industry, team size, timezone, pay cycle (§2.1)** | Headcount and timezone affect period logic, the Team page, and the real-data testing checkpoint | Placeholders remain — **do not invent them** | Reports, Phase 1 fixtures, Phase 7 |
+
+**Q13 is the only question that blocks planned work.** Everything else can ship on the default in force and be corrected by a setting, a config change, or a small migration.
 
 ---
 
@@ -639,9 +721,25 @@ Do not resolve these silently where the answer changes scope, cost, or what gets
 | --- | --- | --- |
 | 2026-09-28 | Social media planning removed; product is monitoring-only | Revised brief |
 | 2026-09-28 | Supabase over Firebase | Per-row RLS, relational reports, atomic activity writes, cheap dashboard reads (§7.3) |
+| 2026-09-28 | Supabase over a self-hosted Express + document-database API | Access rules in the database, not in every repository function; one SQL implementation of the §5 formulas (§7.3) |
+| 2026-09-28 | **Vite + React 19 SPA, not a server-rendered framework** | Private authenticated app with no SEO need; keeps the RLS session context in one place; service-role work becomes a small Vercel function (§7.2) |
+| 2026-09-28 | TanStack Query adopted | Optimistic status moves with rollback and cache invalidation after trigger-written mutations; hand-rolling it is a known bug source (§7.2) |
+| 2026-09-28 | **Fresh build — no port of another product's interface** | Originality rule (§6.5); `Design.md` re-specifies the visual layer anyway |
+| 2026-09-28 | **Board + Table views only** | Timeline and Map answer "when"/"where", not who/what/done/overdue |
 | 2026-09-28 | `@hello-pangea/dnd` for boards | React 19 support, built-in keyboard DnD, canonical Kanban model; isolated in an adapter (§7.2) |
 | 2026-09-28 | All monitoring flags derived, never stored | Manager/employee can never disagree; nothing about a person is stored invisibly (§5.7) |
 | 2026-09-28 | Activity log written by DB triggers, read-only to clients | History cannot be forged or lost (§8.3) |
+| 2026-09-28 | **Only the assignee's own work refreshes `last_activity_at`** | Otherwise a manager tidying deadlines makes a non-working team look active (§5.2.2) |
+| 2026-09-28 | **A pure board reorder writes no activity event** | Otherwise five seconds of idle dragging defeats stalled detection (§5.2.2) |
+| 2026-09-28 | **`app_now()` indirection for every derived formula** | Threshold boundaries are testable against production SQL with no clock mocking (§5.8) |
+| 2026-09-28 | **404, not 403, for a resource the caller may not read** | A 403 confirms the resource exists and enables enumeration (§3.3) |
 | 2026-09-28 | Employee/manager field split via Postgres column grants, not just RLS | RLS cannot restrict columns; the assignment/due-date/priority boundary must be real (§8.4) |
 | 2026-09-28 | Soft delete + profile deactivation instead of hard delete | Preserves history a manager needs; supports retention obligations (§6.4) |
 | 2026-09-28 | Default Done = no manager verification | A verification queue is itself unmonitored work and biases the completion rate (Q1) |
+| 2026-09-28 | Stalled threshold default 3 calendar days | Confirmed; validate against the real manager in week 1 of use (Q2) |
+| 2026-09-28 | Employees may create tasks, self-assign only | Confirmed; enforced by RLS insert check (Q3) |
+| 2026-09-28 | Attachments: private bucket, signed URLs, 10 MB, no scanning in v1 | Confirmed; purge with the task supports the retention obligation (Q6) |
+| 2026-09-28 | Report period defaults to calendar month in the org timezone | Confirmed; switches to the pay cycle when the client supplies it (Q7) |
+| 2026-09-28 | Employee notice, written guide, and Demo org precede real data | Confirmed; a monitoring tool introduced covertly destroys the trust its data quality depends on (Q14) |
+| 2026-09-28 | **Conventional Commits v1.0.0**, enforced by commitlint + husky + CI | A convention nobody can fail is not a convention |
+| 2026-09-28 | **Branch prefixes match the commit type** (`feat/`, `fix/`, …) | Branch and commit history read consistently |
