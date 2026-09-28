@@ -138,7 +138,7 @@ Minimum text size is 12px. Line height 1.5 for body text, 1.2 for headings and n
 - **Desktop-first for managers, usable on a phone for employees.** The employee My Tasks screen must work at 360px width.
 - **Navigation is role-based.**
   - Manager: Dashboard, Team, Boards, Inbox, Schedule, Reports, Settings.
-  - Employee: My Tasks, Boards (own tasks only), Schedule, Inbox.
+  - Employee: My Tasks, Boards (own tasks only), Schedule. Employees create tasks for themselves, so they have no Inbox; the Inbox is manager triage for tasks that are not yet assigned.
 
 ---
 
@@ -148,7 +148,7 @@ Order of regions on desktop, top to bottom, left to right:
 
 ### 7.1 Header
 - Greeting based on time of day plus the user's name, with one line of supporting text (for example, "3 tasks need your attention").
-- **Period selector** (This week default, This month, Custom range). It controls the stat cards and the progress summary. It does not change the "needs attention" list, which is always live.
+- **Period selector** (This week default, This month, This quarter, Custom range). It controls the stat cards and the progress summary. It does not change the "needs attention" list, which is always live. The Dashboard defaults to This week because it is a live operations view; Reports defaults to the calendar month in the organization timezone, which stays in effect until the client's pay cycle is known. Both defaults are explicit, and switching one screen's period never silently changes the other's.
 - Primary button **Add task** (see 7.7). User menu at the far right with name and role.
 
 ### 7.2 Attention count
@@ -189,7 +189,7 @@ Columns: **Employee**, **Current task**, **Progress**, **Status**, **Last active
 
 **Task progress (donut plus legend)**
 - Segments are the four **stored** statuses only: Not started, In progress, Blocked, Done. They are mutually exclusive, so they always add up to the total. Overdue and stalled are shown as separate counts beneath the legend, not as segments.
-- Center label: overall completion rate using the exact formula from `project-context.md` (Done divided by assigned, for the selected period), with the label "Completion".
+- Center label: the overall completion rate from the shared helper, `completed_in_period / due_in_period` for the selected period, labelled "Completion". This is deliberately a **different denominator** from the legend total: the legend counts every task in the period, while the rate divides by tasks due in the period. See 11.4.
 - A 2px surface-colored gap separates segments. The legend lists each status with its icon, name, and count, and is the accessible version of the chart. Provide a "View as table" toggle.
 
 **Recent activity**
@@ -255,7 +255,7 @@ These protect the goal of the system, which is trustworthy monitoring.
 1. **One source of truth for every metric.** Overdue, stalled, completion rate, and workload use only the formulas defined in `project-context.md`. The same helper functions feed the stat cards, the table, the donut, and reports so they can never disagree.
 2. **No invented numbers.** If a value cannot be computed (for example, progress on a task with no checklist), show a dash, not an estimate.
 3. **Chart segments never overlap.** The reference shows an "Overdue" slice next to "In Progress", which would double count a task that is both. Ours use stored statuses only.
-4. **Numbers reconcile.** The completion rate in the donut center must match Done divided by total in the legend. (The reference image itself does not: it shows 75% beside counts that work out to 60%.) Add a test that checks this.
+4. **Numbers reconcile.** The completion rate in the donut center is the same `completion_rate` value Reports shows for the same period, both from the shared helper. The legend counts sum to the legend total, and the segments sum to the same total. The center and the legend total use different denominators by design (see 7.6), so the legend prints its own total and the center is labelled "Completion", never "Done of N". (The reference image does reconcile badly: it shows 75% beside counts that work out to 60%.) Add tests for both relationships.
 5. **Timestamps** are stored in UTC and shown in the viewer's timezone, relative for recent events and absolute on hover.
 6. **Transparency.** Any metric shown about an employee is also visible to that employee.
 
@@ -277,7 +277,7 @@ These protect the goal of the system, which is trustworthy monitoring.
 Define tokens as CSS variables and expose them to Tailwind, so components use semantic classes and both themes work from one set of class names.
 
 ```css
-/* index.css */
+/* index.css — raw theme-aware values */
 :root {
   --bg: #F3FBFA;
   --surface: #FFFFFF;
@@ -291,6 +291,7 @@ Define tokens as CSS variables and expose them to Tailwind, so components use se
   --brand-hover: #065F5B;
   --brand-light: #D2F3F0;
   --on-brand: #FFFFFF;
+  color-scheme: light;
 }
 [data-theme="dark"] {
   --bg: #111B1A;
@@ -305,23 +306,51 @@ Define tokens as CSS variables and expose them to Tailwind, so components use se
   --brand-hover: #5AD9D1;
   --brand-light: #173C3A;
   --on-brand: #062321;
+  color-scheme: dark;
 }
 ```
 
-```js
-// tailwind.config.js (theme.extend)
-colors: {
-  bg: 'var(--bg)', surface: 'var(--surface)', 'surface-alt': 'var(--surface-alt)',
-  border: 'var(--border)', 'border-strong': 'var(--border-strong)',
-  ink: { DEFAULT: 'var(--ink)', muted: 'var(--ink-muted)', faint: 'var(--ink-faint)' },
-  brand: { DEFAULT: 'var(--brand)', hover: 'var(--brand-hover)', light: 'var(--brand-light)', on: 'var(--on-brand)' },
-},
-fontFamily: {
-  display: ['"Space Grotesk"', 'sans-serif'],
-  sans: ['Inter', 'sans-serif'],
-  mono: ['"JetBrains Mono"', 'monospace'],
-},
+```css
+/* index.css — map them into Tailwind. `inline` is required, see below. */
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-light: var(--brand-light);
+  --color-on-brand: var(--on-brand);
+
+  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: Inter, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-modal: 12px;
+
+  --shadow-sm: 0 1px 2px rgb(19 42 41 / 0.05);
+  --shadow-md: 0 2px 8px rgb(19 42 41 / 0.08);
+  --shadow-lg: 0 4px 16px rgb(19 42 41 / 0.12);
+}
+
+[data-theme="dark"] {
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-md: 0 2px 8px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 4px 16px rgb(0 0 0 / 0.55);
+}
 ```
+
+**`@theme inline` is not optional.** Tailwind v4 resolves `@theme` values at build time and substitutes them into the generated CSS. Plain `@theme { --color-surface: var(--surface) }` therefore bakes the *light* value into `.bg-surface`, and switching `data-theme` at runtime changes the variable but not the class output, so dark mode silently renders with light surfaces. `inline` makes Tailwind emit `background-color: var(--surface)` instead, which follows the switch. There is no `tailwind.config.js`; do not add one.
+
+A consequence worth keeping: because the tokens are semantic, components never write `dark:` variants. A card says `bg-surface text-ink`, and the theme switch handles both. Use `dark:` only for a genuine one-off exception, never for tokens that already have a semantic name.
 
 Status colors follow the same pattern (`--status-done-text`, `--status-done-bg`, and so on) using the values in section 3.3 for each theme.
 

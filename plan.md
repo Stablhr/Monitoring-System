@@ -95,7 +95,7 @@ A monitoring product is easy to grow into a productivity suite. These are the mo
 /
 ├── AGENTS.md                       # binding engineering rules
 ├── README.md
-├── Design.md                       # SUPPLIED LATER. Not written in this pass.
+├── Design.md                       # visual + interaction source of truth (added 2026-09-28)
 ├── project-context.md
 ├── plan.md
 ├── package.json
@@ -237,13 +237,13 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G0–G3 (enabler). Nothing user-facing, but everything later depends on it.
 **Depends on:** nothing.
-**Blocked by:** `Design.md` for any visual work. Phase 0 proceeds on logic/tooling only; visual tokens are filled in when `Design.md` lands.
+**Design:** `Design.md` is available, so the token layer is written from it rather than from placeholders. If a task is not covered there, raise the gap instead of guessing.
 
 **Tasks**
 
 1. VS Code project: Vite + React 19 + TypeScript strict, path aliases, Prettier, ESLint 9 flat config, and the `dev` / `build` / `preview` / `typecheck` / `lint` / `test` / `test:e2e` / `verify` scripts.
 2. **Commit discipline from the first commit:** `@commitlint/cli` + `@commitlint/config-conventional`, husky `commit-msg` + `pre-commit`, lint-staged on staged files, `commit-and-tag-version` for changelog/versioning, and a CI job that re-lints the commit range of every pull request. Branch prefixes (`feat/`, `fix/`, …) match the commit types. A convention nobody can fail is not a convention, so the tooling goes in before the first feature commit, not at the end.
-3. Tailwind v4 set up with `@tailwindcss/vite` and an `@theme` token layer containing only the decided values: turquoise primary, flat surfaces, light + dark themes. Placeholder tokens for the rest, marked as awaiting `Design.md`.
+3. Tailwind v4 set up with `@tailwindcss/vite`, tokens taken from `Design.md` §13: raw variables in `:root` / `[data-theme="dark"]`, mapped with **`@theme inline`** so runtime theme switching works. No `tailwind.config.js`. Add a test that fails if a `dark:` variant is used for a token that already has a semantic name.
 4. `[A11Y]` Baseline accessibility scaffolding: skip link, visible focus ring component, `LiveRegion` for announcements, semantic landmarks, `<html lang>`.
 5. `[A11Y]` `contrast.ts` + `ContrastBadge` (§10 of `project-context.md`) with unit tests for known WCAG ratios, and the `/dev/contrast` page registered.
 6. Routing skeleton with route guards stubbed (`requireAuth`, `requireManager`).
@@ -271,7 +271,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G0–G3. This is the phase that makes it a *shared* system instead of a personal to-do list. It is second, not last, for exactly that reason.
 **Depends on:** Phase 0.
-**Blocked by:** `Design.md` for the auth screens' visual design (work proceeds on logic and migrations).
+**Design:** `Design.md` §8 supplies the auth screens' components.
 **Must resolve before finishing:** Q1 (Done verification), Q3 (employee task creation), Q4 (manager as assignee), Q5 (teams in v1), Q6 (attachment limits), Q11 (multiple managers), Q14 (privacy notice).
 
 **Tasks**
@@ -312,7 +312,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G0, G1, G2, G3.
 **Depends on:** Phase 1.
-**Blocked by:** `Design.md` for all interface work (logic may proceed).
+**Design:** built against `Design.md`.
 
 **Tasks**
 
@@ -349,7 +349,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G1, G2 — and without this phase, **G1 and G2 are guesses.** The manager cannot monitor what employees never report.
 **Depends on:** Phase 2. Can run in parallel with Phase 2's task-detail work.
-**Blocked by:** `Design.md` for all interface work.
+**Design:** built against `Design.md`.
 
 **Tasks**
 
@@ -381,7 +381,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G1, G2, G3. **This is the phase where the goal is met.**
 **Depends on:** Phase 3 (there must be real activity to monitor).
-**Blocked by:** `Design.md` for all interface work. Must resolve Q1 and Q2.
+**Design:** built against `Design.md`. Must resolve Q1 and Q2.
 
 **Tasks**
 
@@ -419,7 +419,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G0 (capture before assignment) and G3 (due-date view).
 **Depends on:** Phase 4.
-**Blocked by:** `Design.md` for all interface work. Must resolve Q3 and Q6 if not already resolved.
+**Design:** built against `Design.md`. Must resolve Q3 and Q6 if not already resolved.
 
 **Tasks**
 
@@ -449,7 +449,7 @@ Phase 2 and Phase 3 have a partial overlap: the manager can create and assign in
 
 **Serves:** G2, G3 over time — the "how did this period go" question.
 **Depends on:** Phase 4 (metrics), Phase 5 (exclusion rules). Must resolve Q7, Q8, Q9.
-**Blocked by:** `Design.md` for the report screen.
+**Design:** built against `Design.md`.
 
 **Tasks**
 
@@ -729,7 +729,7 @@ Very rough, for **one experienced full-stack developer** who already knows Supab
 | 3 | 6–8 | | 7 | 5–7 |
 | | | | **Total** | **~42–55** |
 
-The schedule risks are not technical. They are `Design.md` slipping, and a change to the stalled threshold or the privacy-notice flow arriving after Phase 4 — both of which cost about a week, not a redesign. **Phases 0–4 are the product**; everything after is extension.
+The schedule risks are not technical. `Design.md` has landed, which removed the largest one; the remainder are a change to the stalled threshold or the privacy-notice flow arriving after Phase 4 — both of which cost about a week, not a redesign. **Phases 0–4 are the product**; everything after is extension.
 
 ---
 
@@ -739,7 +739,7 @@ The schedule risks are not technical. They are `Design.md` slipping, and a chang
 2. **The cut list stays cut.** Social media planning, compose-post, platform selectors, AI captions, media library, content-approval templates, and the Timeline and Map board views do not reappear in any form.
 3. **Monitoring is not surveillance.** A feature that would let a manager learn something about a person that the person cannot see about themselves is rejected at design time, not at review time.
 4. **One data boundary.** Components never call the backend; the mock adapter never satisfies a monitoring checkpoint.
-5. **`[DESIGN]` is a real dependency.** Interface tasks are not started against invented visual specifications. If `Design.md` slips, the slip moves UI work, not the data and logic work behind it.
+5. **`[DESIGN]` is a real dependency.** Interface tasks are built against `Design.md`, not against invented visual specifications. A task the document does not cover is a gap to raise, not one to guess at.
 6. **Accessibility is done, not polish.** No phase closes with an unresolved keyboard or contrast failure.
 7. **A checkpoint is a checkpoint.** If a phase's multi-user test cannot be run with one manager and two employees on separate browsers, the phase is not done.
 8. **Numbers are reproducible.** Every figure on the Dashboard and in Reports must be hand-checkable from the exported CSV, using the formulas written down in `project-context.md`.

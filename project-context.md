@@ -122,7 +122,7 @@ A **multi-team** concept (one employee on several teams) is modelled but **not e
 
 ## 4. Core areas
 
-Each area is described well enough to build without further design input. All interface work additionally depends on `Design.md` (see §10).
+Each area is described well enough to build without further design input. Interface work follows `Design.md` (see §10), which now exists.
 
 ### 4.1 Manager Dashboard
 
@@ -195,7 +195,7 @@ Calendar view of due dates.
 
 ### 4.7 Task detail
 
-A drawer or full page, depending on `Design.md`. Contains:
+A drawer at 1280px and wider, a full page below (§10). Contains:
 
 - Title, description (rich text, plain text minimum)
 - Status (with allowed transitions), assignee, due date, priority
@@ -443,7 +443,7 @@ The system stores employee names, work contact details, task text, comments, and
 
 ### 6.5 Originality
 
-Boards, lists, cards, and drag-and-drop are established patterns and are used. Nothing is copied from another product: not a name, logo, wordmark, icon set, illustration, illustration style, marketing copy, or brand colour palette. Icons come from Lucide with its licence recorded. The turquoise primary, the flat treatment, and the light/dark theming are this product's own; `Design.md` will specify the rest and must not restate any other product's identity.
+Boards, lists, cards, and drag-and-drop are established patterns and are used. Nothing is copied from another product: not a name, logo, wordmark, icon set, illustration, illustration style, marketing copy, or brand colour palette. Icons come from Lucide with its licence recorded. The turquoise primary, the flat treatment, and the light/dark theming are this product's own; `Design.md` specifies the rest and does not restate any other product's identity.
 
 **This is a fresh build.** The project's earlier direction was a Trello-inspired app whose interface was a port of another product, complete with that product's CSS file, wrapper class, and component names. None of that carries forward. Concretely:
 
@@ -466,7 +466,7 @@ VS Code. Deployed on Vercel.
 - **TanStack Query v5** for server state. Not an API layer — the Supabase SDK is the transport — but the optimistic status moves with rollback, and cache invalidation after every trigger-written mutation, are exactly what it exists for. Hand-rolling that is a known source of bugs.
 - **Zod** for validation at the data-access boundary, so a malformed row cannot reach a component; **React Hook Form** for forms.
 - **Drag and drop: `@hello-pangea/dnd`.** Reasons: it is the maintained community fork of `react-beautiful-dnd` (v18.0.1, Apache-2.0) and declares support for React 18 and 19, which keeps us on current React; it has a real keyboard-accessible drag mode with screen-reader announcements built in, which is required here (keyboard support is part of "done", not polish); and it is a drop-in for the canonical Kanban interaction model, so the board is cheap and correct. **Caveat and boundary:** it is a list/board library, not a calendar library — the Schedule drag-reschedule (§4.6) will not use it, and will use a small purpose-built pointer/keyboard interaction on day cells. All `@hello-pangea/dnd` usage is confined to one adapter module (`src/lib/dnd/`) so a future React or library migration is a single-file change.
-- Visual direction is **pending `Design.md`**. No visual specifications are invented in this plan. Already decided: flat, professional, business look; **no glassmorphism, no neumorphism**; **turquoise primary**; **light and dark themes**; text readable on any background.
+- Visual direction is **`Design.md`**, which now exists. No visual specifications are invented in this plan. Already decided: flat, professional, business look; **no glassmorphism, no neumorphism**; **turquoise primary**; **light and dark themes**; text readable on any background.
 
 ### 7.3 Backend
 **Required.** A manager cannot monitor employees if each person's data lives in their own browser, so a localStorage-only build is unacceptable here. Authentication, roles, and a shared database with per-row access rules land in Phase 1, not at the end.
@@ -665,9 +665,19 @@ If a template resembling any of these appears in a later phase, it is a scope er
 
 ## 10. Design dependency
 
-`Design.md` will be supplied after this planning pass, based on a UI/UX reference image. It does not exist yet.
+`Design.md` **exists** (added 2026-09-28). It is the visual and interaction source of truth: colour tokens for both themes, typography, spacing and elevation, the manager Dashboard specification, component anatomy, motion, and accessibility requirements. Its 51 colour pairs were recomputed with the WCAG 2 relative-luminance formula; all pass.
 
-**Binding rule:** every user-interface task in `plan.md` is tagged `[DESIGN]` and depends on `Design.md`. A phase may not be signed off with unresolved interface work; where `Design.md` is not yet available, the corresponding work is limited to data and logic layers, and the UI is built when the document lands.
+**Binding rule:** every user-interface task in `plan.md` is tagged `[DESIGN]` and is built *against* `Design.md`, never against an invented specification. A phase may not be signed off with unresolved interface work. If a task is not covered by the document, that is a gap to raise explicitly, not licence to guess.
+
+Five points where this plan and `Design.md` disagreed, and the resolution each now records:
+
+| Point | Resolution |
+| --- | --- |
+| Donut centre formula | `completion_rate` = `completed_in_period / due_in_period` (§5.5), the same helper Reports uses. `Design.md` §11.4 originally reconciled the centre against "Done divided by total in the legend", a different denominator, and §7.6 misquoted the formula as Done/assigned. Both corrected. The legend total is tasks in the period and is printed separately from the rate. |
+| Token wiring | Tailwind v4 CSS-first: raw variables in `:root` / `[data-theme="dark"]`, mapped with `@theme inline` so runtime theme switching works. No `tailwind.config.js` (§7.2). |
+| Period default | Dashboard defaults to This week (a live operations view); Reports defaults to the calendar month in the organization timezone, which holds until the pay cycle is known. Both defaults are explicit and independent. |
+| Employee navigation | No Inbox for employees. They self-assign, so Inbox stays manager-only triage of unassigned tasks (§4.5, Q3). |
+| Task detail surface | Not specified by `Design.md`. Decided here: a **drawer at ≥1280px**, a full page below. Keeps board context while working, and stays usable on a phone. Recorded so it is not re-opened. |
 
 Already decided and not to be re-opened: flat professional business look; no glassmorphism; no neumorphism; turquoise primary; light and dark themes; text readable on any background.
 

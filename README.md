@@ -159,7 +159,7 @@ Out of scope for the first release: automation rules, Slack/Teams/third-party in
 monitoring-system/
 ├── AGENTS.md                       # Binding rules for agents and contributors
 ├── README.md
-├── Design.md                       # Supplied after planning. Not authored here.
+├── Design.md                       # visual + interaction source of truth
 ├── project-context.md              # Problem, roles, monitoring formulas, data model
 ├── plan.md                         # Goal-to-feature matrix, phases, acceptance scenarios
 ├── package.json
@@ -494,7 +494,7 @@ A convention nobody can fail is not a convention. Do not use `--no-verify` to ge
 2. Follow the commit message convention.
 3. Open a pull request into `main` and request a code review before merging.
 4. **Accessibility is part of done, not polish** — no phase closes with an unresolved keyboard-navigation, focus-visibility, or contrast failure.
-5. **Interface work depends on `Design.md`.** Do not invent visual specifications. If `Design.md` is unavailable, limit the work to data and logic layers.
+5. **Interface work follows `Design.md`.** Do not invent visual specifications. A task the document does not cover is a gap to raise, not one to guess at.
 6. **Every feature must map to a goal element** in the matrix in `plan.md`. If it maps to none, it is cut or deferred.
 
 More detail for agents and contributors lives in [`AGENTS.md`](./AGENTS.md).
@@ -508,4 +508,4 @@ More detail for agents and contributors lives in [`AGENTS.md`](./AGENTS.md).
 | [`project-context.md`](./project-context.md) | Problem statement, roles and permissions matrix, the eight core areas, the normative monitoring formulas, the data model, access rules, and open questions |
 | [`plan.md`](./plan.md) | Goal-to-feature matrix, folder structure, phased build order, goal acceptance scenarios, risks, and deferrals |
 | [`AGENTS.md`](./AGENTS.md) | Binding engineering rules and conventions |
-| `Design.md` | Supplied after planning, based on a UI/UX reference. Not yet available |
+| [`Design.md`](./Design.md) | Colour tokens for both themes, typography, spacing, the manager Dashboard specification, component anatomy, motion, and accessibility requirements |

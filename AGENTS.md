@@ -64,10 +64,11 @@ A stall means *no work happened on this task*. It does not mean *this person was
 
 ## 3. Visual work depends on `Design.md`
 
-`Design.md` has not been written yet; it is supplied after the planning pass, from a UI/UX reference image.
+`Design.md` exists and is the visual and interaction source of truth: tokens, typography, spacing, the Dashboard specification, component anatomy, motion, and accessibility. Its colour ratios were verified with the WCAG 2 formula.
 
-- **Do not invent visual specifications.** No colours beyond the decided ones, no spacing scale, no component styling guesses, no layout decisions.
-- Every interface task in `plan.md` is tagged `[DESIGN]` and depends on it. Where it is unavailable, limit work to data and logic layers.
+- **Do not invent visual specifications.** No colours beyond those in `Design.md`, no spacing values, no component styling guesses, no layout decisions.
+- Every interface task in `plan.md` is tagged `[DESIGN]` and is built against it. **A task the document does not cover is a gap to raise, not licence to guess** — say so instead of inventing a value.
+- Use the semantic tokens (`bg-surface`, `text-ink`, `border-strong`, …). Because they are theme-aware, components write no `dark:` variants. There is no `tailwind.config.js`; tokens live in `src/styles/index.css` behind **`@theme inline`**, without which dark mode silently renders light.
 - **Already decided and not to be re-opened:** flat, professional, business look; **no glassmorphism; no neumorphism**; **turquoise primary**; light and dark themes; text readable on any background.
 
 **Originality:** boards, lists, cards, and drag-and-drop are established patterns and are fine to use. Do not copy any other product's name, logo, wordmark, icon set, illustration, illustration style, marketing copy, or brand colour palette. This codebase is a **fresh build** — do not reintroduce a port of another product, its CSS, its wrapper class names, or its component names. Icons come from Lucide with its licence recorded.
@@ -177,6 +178,6 @@ git commit -m "docs: add phase 4 testing checkpoint"
 - [ ] Is every permission enforced in the database, with a test in the matrix suite?
 - [ ] Is it fully keyboard-operable with a visible focus state, in both themes?
 - [ ] Do the numbers match the SQL formulas, and are they reproducible from the CSV?
-- [ ] Is any interface work depending on `Design.md` rather than on a guess?
+- [ ] Is any interface work matching `Design.md` rather than a guess, and is any new value recorded there instead of invented here?
 - [ ] Did I run `npm run verify`?
 - [ ] Is the commit message Conventional Commits, and the branch prefix matching?
